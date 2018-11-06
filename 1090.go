@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2018 REGENTAG.
+Copyright (c) 2018 Ham, Yeongtaek.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +25,6 @@ package go1090
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"os/exec"
 	"strconv"
 )
@@ -56,16 +55,15 @@ type MessageHandler func(*ADSBMsg)
 
 // StartReceive function.
 func StartReceive(execPath string, handler MessageHandler) (func(), error) {
-	fmt.Println("Exec path: ", execPath)
 	cmd := exec.Command(execPath)
 	stdout, err := cmd.StdoutPipe()
 
 	if err != nil {
-		return nil, fmt.Errorf("RTL-ADSB Error: %s", err.Error())
+		return nil, fmt.Errorf("RTL-ADSB error: %s", err.Error())
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("RTL-ADSB Error: %s", err.Error())
+		return nil, fmt.Errorf("RTL-ADSB error: %s", err.Error())
 	}
 
 	go func() {
@@ -73,27 +71,21 @@ func StartReceive(execPath string, handler MessageHandler) (func(), error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 
-			// ADS-B messages are starts with '*' charactor.
-			if len(line) > 0 && line[0] == '*' {
-				m := parseADSB(line)
-				if m != nil {
-					handler(m)
-				}
+			m := parseADSB(line)
+			if m != nil {
+				handler(m)
 			}
 		}
 		cmd.Wait()
 	}()
 	return func() {
 		cmd.Process.Kill()
-		log.Println("RTL-ADSB killed by caller.")
 	}, nil
 }
 
 // Parse ADS-B data.
 // See: https://mode-s.org/decode/adsb/introduction.html
 func parseADSB(hexstr string) *ADSBMsg {
-	log.Println("MSG: ", hexstr)
-
 	if isValidMsgText(hexstr) {
 		var bin [14]uint8
 		bin[0] = parseHex(hexstr[1:3])
@@ -143,7 +135,6 @@ func parseHex(hexstr string) uint8 {
 //   *112233445566778899AABBCCDDEE;
 func isValidMsgText(hexstr string) bool {
 	if len(hexstr) != 30 {
-		// rtl_adsb
 		return false
 	}
 
