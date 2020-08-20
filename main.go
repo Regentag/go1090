@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/jroimartin/gocui"
+	"github.com/awesome-gocui/gocui"
 )
 
 type Context struct {
@@ -38,15 +38,13 @@ func (ctx *Context) update(g *gocui.Gui) error {
 
 func main() {
 	// init ui
-	g, err := gocui.NewGui(gocui.Output256)
+	g, err := gocui.NewGui(gocui.OutputNormal, false)
 	if err != nil {
 		log.Panicln(err)
 	}
 
 	defer g.Close()
 
-	g.BgColor = gocui.ColorCyan
-	g.FgColor = gocui.ColorBlack
 	g.SetManagerFunc(layout)
 
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -71,24 +69,29 @@ func main() {
 	stopFunc, e := rtl_adsb.StartReceive("rtl_adsb.exe", handler)
 
 	if e != nil {
-		fmt.Println("error: ", e)
+		log.Panicln("error: ", e)
 	}
 
-	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
+	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
 		log.Panicln(err)
 	}
-	fmt.Println("shutting down...")
+
 	stopFunc()
 }
 
 func layout(g *gocui.Gui) error {
+	// colour settings
+	g.BgColor = gocui.ColorCyan
+	g.FgColor = gocui.ColorBlack
+
+	// layout
 	maxX, maxY := g.Size()
 
-	v, _ := g.SetView("status", 0, 0, maxX-1, 2)
+	v, _ := g.SetView("status", 0, 0, maxX-2, 2, 0)
 	v.BgColor = gocui.ColorWhite
 	fmt.Fprintln(v, " Aircrafts: --  Last Update: 0000-00-00 00:00:00")
 
-	v, _ = g.SetView("list", 0, 3, maxX-1, maxY-1)
+	v, _ = g.SetView("list", 0, 3, maxX-2, maxY-1, 0)
 	v.Title = "[ Aircrafts ]"
 	return nil
 }
