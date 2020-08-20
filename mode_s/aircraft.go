@@ -2,7 +2,6 @@ package mode_s
 
 import (
 	"fmt"
-	"io"
 	"math"
 	"sync"
 	"time"
@@ -12,35 +11,43 @@ const MODES_AIRCRAFT_TTL = 60 /* TTL before being removed */
 
 /* Structure used to describe an aircraft in iteractive mode. */
 type Aircraft struct {
-	addr     uint32    /* ICAO address */
-	hexaddr  string    /* Printable ICAO address */
-	flight   string    /* Flight number */
-	altitude int       /* Altitude */
-	speed    int       /* Velocity computed from EW and NS components. */
-	track    int       /* Angle of flight. */
-	seen     time.Time /* Time at which the last packet was received. */
-	messages int64     /* Number of Mode S messages received. */
+	Addr     uint32    /* ICAO address */
+	HexAddr  string    /* Printable ICAO address */
+	Flight   string    /* Flight number */
+	Altitude int       /* Altitude */
+	Speed    int       /* Velocity computed from EW and NS components. */
+	Track    int       /* Angle of flight. */
+	Seen     time.Time /* Time at which the last packet was received. */
+	Messages int64     /* Number of Mode S messages received. */
 
 	/* Encoded latitude and longitude as extracted by odd and even
 	 * CPR encoded messages. */
-	odd_cprlat  int
-	odd_cprlon  int
-	even_cprlat int
-	even_cprlon int
+	OddCprLat  int
+	OddCprLon  int
+	EvenCprLat int
+	EvenCprLon int
 
-	lat, lon                  float64 /* Coordinated obtained from CPR encoded data. */
-	odd_cprtime, even_cprtime int64
+	Latitude, Longitude     float64 /* Coordinated obtained from CPR encoded data. */
+	OddCprTime, EvenCprTime int64
 }
 
 /* Return a new aircraft structure for the interactive mode linked list
  * of aircrafts. */
 func NewAircraft(addr uint32) *Aircraft {
 	return &Aircraft{
-		addr:    addr,
-		hexaddr: fmt.Sprintf("%06X", addr),
-		seen:    time.Now(),
+		Addr:    addr,
+		HexAddr: fmt.Sprintf("%06X", addr),
+		Seen:    time.Now(),
 		// all other fields = 0
 	}
+}
+
+func (ac *Aircraft) Clone() *Aircraft {
+	clone := Aircraft{}
+	//deepcopier.Copy(ac).To(clone)
+	clone = *ac
+
+	return &clone
 }
 
 type Sky struct {
@@ -57,13 +64,17 @@ func NewSky() *Sky {
 	}
 }
 
-func (sky *Sky) PrintAircrafts(w io.Writer) {
+// return copy of aircrafts data
+func (sky *Sky) Aircrafts() map[uint32]*Aircraft {
 	sky.mux.Lock()
 	defer sky.mux.Unlock()
-	for _, ac := range sky.aircrafts {
-		fmt.Fprintf(w, "%s : FLIGHT %s  ALT %d\n",
-			ac.hexaddr, ac.flight, ac.altitude)
+
+	clone := make(map[uint32]*Aircraft)
+	for addr, ac := range sky.aircrafts {
+		clone[addr] = ac.Clone()
 	}
+
+	return clone
 }
 
 func (sky *Sky) AircraftCount() int {
@@ -92,34 +103,34 @@ func (sky *Sky) UpdateData(mm *ModeSMessage) *Aircraft {
 		sky.aircrafts[addr] = a
 	}
 
-	a.seen = time.Now()
-	a.messages++
+	a.Seen = time.Now()
+	a.Messages++
 
 	if mm.msgtype == 0 || mm.msgtype == 4 || mm.msgtype == 20 {
-		a.altitude = mm.altitude
+		a.Altitude = mm.altitude
 	} else if mm.msgtype == 17 {
 		if mm.metype >= 1 && mm.metype <= 4 {
-			a.flight = string(mm.flight[:])
+			a.Flight = string(mm.flight[:])
 		} else if mm.metype >= 9 && mm.metype <= 18 {
-			a.altitude = mm.altitude
+			a.Altitude = mm.altitude
 			if mm.fflag != 0 {
-				a.odd_cprlat = mm.raw_latitude
-				a.odd_cprlon = mm.raw_longitude
-				a.odd_cprtime = mstime()
+				a.OddCprLat = mm.raw_latitude
+				a.OddCprLon = mm.raw_longitude
+				a.OddCprTime = mstime()
 			} else {
-				a.even_cprlat = mm.raw_latitude
-				a.even_cprlon = mm.raw_longitude
-				a.even_cprtime = mstime()
+				a.EvenCprLat = mm.raw_latitude
+				a.EvenCprLon = mm.raw_longitude
+				a.EvenCprTime = mstime()
 			}
 			/* If the two data is less than 10 seconds apart, compute
 			 * the position. */
-			if math.Abs(float64(a.even_cprtime-a.odd_cprtime)) <= 10000 {
+			if math.Abs(float64(a.EvenCprTime-a.OddCprTime)) <= 10000 {
 				decodeCPR(a)
 			}
 		} else if mm.metype == 19 {
 			if mm.mesub == 1 || mm.mesub == 2 {
-				a.speed = mm.velocity
-				a.track = mm.heading
+				a.Speed = mm.velocity
+				a.Track = mm.heading
 			}
 		}
 	}
@@ -140,10 +151,10 @@ func (sky *Sky) UpdateData(mm *ModeSMessage) *Aircraft {
 func decodeCPR(a *Aircraft) {
 	const AirDlat0 float64 = 360.0 / 60
 	const AirDlat1 float64 = 360.0 / 59
-	lat0 := float64(a.even_cprlat)
-	lat1 := float64(a.odd_cprlat)
-	lon0 := float64(a.even_cprlon)
-	lon1 := float64(a.odd_cprlon)
+	lat0 := float64(a.EvenCprLat)
+	lat1 := float64(a.OddCprLat)
+	lon0 := float64(a.EvenCprLon)
+	lon1 := float64(a.OddCprLon)
 
 	/* Compute the Latitude Index "j" */
 	j := int(math.Floor(((59*lat0 - 60*lat1) / 131072) + 0.5))
@@ -163,23 +174,23 @@ func decodeCPR(a *Aircraft) {
 	}
 
 	/* Compute ni and the longitude index m */
-	if a.even_cprtime > a.odd_cprtime {
+	if a.EvenCprTime > a.OddCprTime {
 		/* Use even packet. */
 		var ni int = cprNFunction(rlat0, 0)
 		m := math.Floor((((lon0 * float64(cprNLFunction(rlat0)-1)) -
 			(lon1 * float64(cprNLFunction(rlat0)))) / 131072) + 0.5)
-		a.lon = cprDlonFunction(rlat0, 0) * (float64(cprModFunction(int(m), ni)) + lon0/131072)
-		a.lat = rlat0
+		a.Longitude = cprDlonFunction(rlat0, 0) * (float64(cprModFunction(int(m), ni)) + lon0/131072)
+		a.Latitude = rlat0
 	} else {
 		/* Use odd packet. */
 		var ni int = cprNFunction(rlat1, 1)
 		m := math.Floor((((lon0 * float64(cprNLFunction(rlat1)-1)) -
 			(lon1 * float64(cprNLFunction(rlat1)))) / 131072.0) + 0.5)
-		a.lon = cprDlonFunction(rlat1, 1) * (float64(cprModFunction(int(m), ni)) + lon1/131072)
-		a.lat = rlat1
+		a.Longitude = cprDlonFunction(rlat1, 1) * (float64(cprModFunction(int(m), ni)) + lon1/131072)
+		a.Latitude = rlat1
 	}
-	if a.lon > 180 {
-		a.lon -= 360
+	if a.Longitude > 180 {
+		a.Longitude -= 360
 	}
 }
 
@@ -345,9 +356,13 @@ func (sky *Sky) RemoveStaleAircrafts() {
 	remKeys := make([]uint32, 0)
 
 	for k, a := range sky.aircrafts {
-		dur := now.Sub(a.seen)
+		dur := now.Sub(a.Seen)
 		if int(dur.Seconds()) > sky.aircraft_ttl {
 			remKeys = append(remKeys, k)
 		}
+	}
+
+	for _, k := range remKeys {
+		delete(sky.aircrafts, k)
 	}
 }

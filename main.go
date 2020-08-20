@@ -5,9 +5,11 @@ import (
 	"go1090/mode_s"
 	"go1090/rtl_adsb"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/awesome-gocui/gocui"
+	. "github.com/logrusorgru/aurora"
 )
 
 type Context struct {
@@ -26,13 +28,37 @@ func (ctx *Context) update(g *gocui.Gui) error {
 	// update time and aircraft count
 	s, _ := g.View("status")
 	s.Clear()
-	fmt.Fprintf(s, " Aircrafts: %02d  Last Update: %s\n",
-		ctx.sky.AircraftCount(),
-		time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(s, " A/C: %02d  LAST UPDATE: %s\n",
+		Green(ctx.sky.AircraftCount()),
+		Bold(Green(time.Now().Format("2006-01-02 15:04:05"))))
 
 	l, _ := g.View("list")
 	l.Clear()
-	ctx.sky.PrintAircrafts(l)
+
+	// display aircraft list
+	fmt.Fprintln(l, " ICAO ADDR    FLIGHT     ALT    SPD    HDG     LAT     LON  SEEN")
+	fmt.Fprintln(l, " ===================================================================")
+
+	aircrafts := ctx.sky.Aircrafts()
+	addrs := make([]uint32, 0, len(aircrafts))
+	for addr := range aircrafts {
+		addrs = append(addrs, addr)
+	}
+	sort.Slice(addrs, func(i, j int) bool { return addrs[i] < addrs[j] })
+
+	for _, addr := range addrs {
+		ac := aircrafts[addr]
+		fmt.Fprintln(l, Sprintf(Yellow(" %6s       %9s  %-5d  %-5d  %-3d  %6.2f  %6.2f  %s"),
+			ac.HexAddr,
+			ac.Flight,
+			ac.Altitude,
+			ac.Speed,
+			ac.Track,
+			ac.Latitude,
+			ac.Longitude,
+			ac.Seen.Format("15:04:05")))
+	}
+
 	return nil
 }
 
@@ -55,22 +81,28 @@ func main() {
 	ctx := CreateContext()
 	ctx.decoder.Init()
 
+	// start receive
 	handler := func(rcv rtl_adsb.ADSBMsg) {
 		msg := mode_s.ModeSMessage{}
 		ctx.decoder.DecodeModesMessage(&msg, rcv[:])
 
 		ctx.sky.UpdateData(&msg)
-		ctx.sky.RemoveStaleAircrafts()
-
 		g.Update(ctx.update)
 	}
 
-	// start receive
 	stopFunc, e := rtl_adsb.StartReceive("rtl_adsb.exe", handler)
 
 	if e != nil {
 		log.Panicln("error: ", e)
 	}
+
+	//
+	go func() {
+		for ; ; <-time.Tick(time.Second * 1) {
+			ctx.sky.RemoveStaleAircrafts()
+			g.Update(ctx.update)
+		}
+	}()
 
 	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
 		log.Panicln(err)
@@ -80,19 +112,16 @@ func main() {
 }
 
 func layout(g *gocui.Gui) error {
-	// colour settings
-	g.BgColor = gocui.ColorCyan
-	g.FgColor = gocui.ColorBlack
-
 	// layout
-	maxX, maxY := g.Size()
+	const maxX = 80
+	_, maxY := g.Size()
 
 	v, _ := g.SetView("status", 0, 0, maxX-2, 2, 0)
-	v.BgColor = gocui.ColorWhite
-	fmt.Fprintln(v, " Aircrafts: --  Last Update: 0000-00-00 00:00:00")
+	v.Title = " STATUS "
+	fmt.Fprintln(v, " A/C: --  LAST UPDATE: 0000-00-00 00:00:00")
 
 	v, _ = g.SetView("list", 0, 3, maxX-2, maxY-1, 0)
-	v.Title = "[ Aircrafts ]"
+	v.Title = " A/C "
 	return nil
 }
 
